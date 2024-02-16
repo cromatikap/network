@@ -12,6 +12,20 @@ Keccak256.set(await Keccak256.fromMorax())
  */
 const maxUint256BigInt = (2n ** 256n) - 1n
 
+export interface Secret {
+  readonly secretZeroHex: string,
+  readonly proofZeroHex: string,
+  readonly valueBigInt: bigint
+}
+
+export namespace Secret {
+
+  export function sortLowToHigh(a: Secret, b: Secret) {
+    return a.valueBigInt < b.valueBigInt ? -1 : 1
+  }
+
+}
+
 /**
  * Mixing ABI struct
  */
@@ -40,16 +54,27 @@ const receiverBytes = Base16.get().padStartAndDecodeOrThrow(receiverBase16).copy
 
 const mixinAbi = Mixin.from([chainBytes, contractBytes, receiverBytes, new Uint8Array(32)])
 const mixinBytes = Writable.writeToBytesOrThrow(mixinAbi)
+const mixinOffset = mixinBytes.length - 32
+
+const secrets = new Array<Secret>()
+
+const priceBigInt = 10n ** 5n
+
+const maxCountNumber = 10
+const maxCountBigInt = BigInt(maxCountNumber)
+const minValueBigInt = priceBigInt / maxCountBigInt
+
+const secretBytes = new Uint8Array(32)
 
 let amountBigInt = 0n
 
 const start = Date.now()
 
-while (amountBigInt < (10n ** 6n)) {
+while (amountBigInt < priceBigInt) {
   /**
    * Generate a secret
    */
-  const secretBytes = crypto.getRandomValues(new Uint8Array(32))
+  crypto.getRandomValues(secretBytes)
 
   /**
    * Generate a proof of the secret
@@ -59,7 +84,7 @@ while (amountBigInt < (10n ** 6n)) {
   /**
    * Mix the proof with the public stuff
    */
-  mixinBytes.set(proofBytes, mixinBytes.length - 32)
+  mixinBytes.set(proofBytes, mixinOffset)
 
   /**
    * Compute the divisor
@@ -73,22 +98,45 @@ while (amountBigInt < (10n ** 6n)) {
    */
   const valueBigInt = maxUint256BigInt / divisorBigInt
 
-  /**
-   * Filter values that are too small
-   */
-  if (valueBigInt < (10n ** 4n))
+  if (valueBigInt < minValueBigInt)
     continue
 
-  const secretBase16 = Base16.get().encodeOrThrow(secretBytes)
-  const secretZeroHex = `0x${secretBase16.padStart(64, "0")}`
+  if (secrets.length === maxCountNumber) {
+    /**
+     * Skip if the value is too small
+     */
+    if (valueBigInt < secrets[0].valueBigInt)
+      continue
 
-  const proofBase16 = Base16.get().encodeOrThrow(proofBytes)
-  const proofZeroHex = `0x${proofBase16.padStart(64, "0")}`
+    /**
+     * Replace the smallest secret
+     */
+    amountBigInt -= secrets[0].valueBigInt
 
-  console.log(valueBigInt, secretZeroHex, proofZeroHex)
+    const secretBase16 = Base16.get().encodeOrThrow(secretBytes)
+    const secretZeroHex = `0x${secretBase16.padStart(64, "0")}`
+
+    const proofBase16 = Base16.get().encodeOrThrow(proofBytes)
+    const proofZeroHex = `0x${proofBase16.padStart(64, "0")}`
+
+    secrets[0] = { secretZeroHex, valueBigInt, proofZeroHex }
+  } else {
+    const secretBase16 = Base16.get().encodeOrThrow(secretBytes)
+    const secretZeroHex = `0x${secretBase16.padStart(64, "0")}`
+
+    const proofBase16 = Base16.get().encodeOrThrow(proofBytes)
+    const proofZeroHex = `0x${proofBase16.padStart(64, "0")}`
+
+    secrets.push({ secretZeroHex, valueBigInt, proofZeroHex })
+  }
+
+  secrets.sort(Secret.sortLowToHigh)
   amountBigInt += valueBigInt
 
   continue
 }
 
-console.log(`You just generated ${amountBigInt} wei worth of secrets in ${Date.now() - start} milliseconds`)
+for (const { secretZeroHex, proofZeroHex, valueBigInt } of secrets)
+  console.log(valueBigInt, secretZeroHex, proofZeroHex)
+
+console.log(`You just generated ${amountBigInt} wei with ${secrets.length} secrets in ${Date.now() - start} milliseconds`)
